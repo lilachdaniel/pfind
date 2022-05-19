@@ -44,7 +44,7 @@ void enqueue(queue *q, void *value) {
 	new_node->value = value;
 	new_node->next = q->last;
 	new_node->prev = NULL;
-	
+
 	/* update queue */
 	if (is_empty(q)) {
 		q->first = new_node;
@@ -106,18 +106,54 @@ mtx_t conds_mutex;
 
 char *search_term;
 
+/* Wake next sleeping thread up.
+   USE AFTER LOCKING conds_mutex !!! */
+void wake_next() {
+	printf("in wake next\n");
+	int next_thrd = *((int *)dequeue(conds_queue));
+	cnd_signal(&cv_arr[next_thrd]);
+	printf("waking thread %d up\n", next_thrd);
+}
+
+void exit_all_thrds() {
+	printf("in exit_all_thrds\n");
+	/* raise flag */
+	done = 1;
+
+	/* wake all threads up */
+	mtx_lock(&conds_mutex);
+	while (!is_empty(conds_queue)) {
+		wake_next();
+	}
+	mtx_unlock(&conds_mutex);
+	printf("exiting...\n");
+	/* exit */
+	thrd_exit(0);
+}
+
 void wait_for_tasks(int thrd_id) {
 	mtx_lock(&paths_mutex);
-	
+	printf("in wait for tasks\n");
 	if (is_empty(paths_queue)) {
+		printf("paths_queue empty\n");
 		num_thrds_waiting++;
 			
 		mtx_lock(&conds_mutex);
 		enqueue(conds_queue, &thrd_id);
 		mtx_unlock(&conds_mutex);
 		
+		/* check if all threads are sleeping */
+		printf("num_thrds_alive = %d\nnum_thrds_waiting = %d\n", num_thrds_alive, num_thrds_waiting);
+		if (num_thrds_alive - 1 == num_thrds_waiting) {
+			exit_all_thrds();
+		}
+		printf("thread %d waiting...\n", thrd_id);
 		cnd_wait(&cv_arr[thrd_id], &paths_mutex);
-	
+		printf("thread %d stopped waiting.\n", thrd_id);
+		mtx_lock(&paths_mutex);
+		int boo = is_empty(paths_queue);
+		printf("is paths_queue empty? %d\n", boo);
+		mtx_unlock(&paths_mutex);
 		/* thread woke up! */
 		num_thrds_waiting--;
 	}
@@ -127,29 +163,8 @@ void wait_for_tasks(int thrd_id) {
 	}
 }
 
-/* Wake next sleeping thread up.
-   USE AFTER LOCKING conds_mutex !!! */
-void wake_next() {
-	int next_thrd = *((int *)dequeue(conds_queue));
-	cnd_signal(&cv_arr[next_thrd]);
-}
-
-void exit_all_thrds() {
-	/* raise flag */
-	done = 1;
-
-	/* wake all threads up */
-	mtx_lock(&conds_mutex);
-	while (!is_empty(paths_queue)) {
-		wake_next();
-	}
-	mtx_unlock(&conds_mutex);
-	
-	/* exit */
-	thrd_exit(0);
-}
-
 void exit_if_really_empty() {
+	printf("done = %d\n", done);
 	if (done == 1) {
 		thrd_exit(0);
 	}
@@ -158,7 +173,7 @@ void exit_if_really_empty() {
 /* Returns path + "/" + file_name */
 char *update_path(char *path, char *file_name) {
 	char *new_path = (char *)malloc(PATH_MAX * sizeof(char));
-	printf("in update_path\n");
+	
 	strcpy(new_path, path);
         strcat(new_path, "/");
         strcat(new_path, file_name);
@@ -189,8 +204,6 @@ void search_path(char *path, int thrd_id) {
 		/* put path to entry in new_path */
 		new_path = update_path(path, file_name);
 		
-		printf("new_path = %s\n", new_path);
-		
 		/* check if entry is a directory */
 		stat(new_path, &buf);
 		if (S_ISDIR(buf.st_mode)) { /* entry is a directory, enqueue it to paths */
@@ -198,15 +211,15 @@ void search_path(char *path, int thrd_id) {
 			mtx_lock(&paths_mutex);
 			enqueue(paths_queue, new_path);
 			mtx_unlock(&paths_mutex);
-			
+
 			/* wake up a thread */
 			mtx_lock(&conds_mutex);
-			while (!is_empty(paths_queue)) {
+			while (!is_empty(conds_queue)) {
 				wake_next();
 			}
 			mtx_unlock(&conds_mutex);
 		}
-		
+
 		/* entry is a file */
 		/* check if entry contains search term */
 		else if (strstr(file_name, search_term) != NULL) { /* entry contains search_term */
@@ -232,11 +245,7 @@ int thrd_func(void *thrd_id) {
 		mtx_unlock(&paths_mutex);
 		
 		search_path(curr_path, id);
-		
-		/* check if all threads are sleeping */
-		if (num_thrds_alive == num_thrds_waiting - 1) {
-			exit_all_thrds();
-		}
+
 	}
 	return 0; /* everything went fine */
 }
