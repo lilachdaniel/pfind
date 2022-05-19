@@ -155,47 +155,63 @@ void exit_if_really_empty() {
 	}
 }
 
+/* Returns path + "/" + file_name */
+char *update_path(char *path, char *file_name) {
+	char *new_path = (char *)malloc(PATH_MAX * sizeof(char));
+	printf("in update_path\n");
+	strcpy(new_path, path);
+        strcat(new_path, "/");
+        strcat(new_path, file_name);
+        
+        return new_path;
+}
+
+
 void search_path(char *path, int thrd_id) {
 	struct dirent *entry;
 	DIR *d;
 	struct stat buf;
 	char *file_name;
-	char new_path[PATH_MAX];
+	char *new_path;
 	
 	d = opendir(path);
-	if (d) {
-		while ((entry = readdir(d)) != NULL) {
-			/* extract file name */
-			file_name = entry->d_name;
+	/* assert d != NULL */
+	
+	while ((entry = readdir(d)) != NULL) {
+		/* extract file name */
+		file_name = entry->d_name;
+			
+		/* ignore "." and ".." */
+		if (strcmp(file_name, ".") == 0 || strcmp(file_name, "..") == 0){
+            		continue;
+        	}
+        	
+		/* put path to entry in new_path */
+		new_path = update_path(path, file_name);
 		
-			/* put path to entry in new_path */
-			strcpy(new_path, path);
-			strcat(new_path, "/");
-			strcat(new_path, file_name);
-			printf("new_path = %s\n", new_path);
-			/* check if entry is a directory */
-			stat(new_path, &buf);
-			printf("buff == NULL : %d\n", (buf == NULL));
-			if (S_ISDIR(buf.st_mode)) { /* entry is a directory, enqueue it to paths */
-				/* add to paths_queue */
-				mtx_lock(&paths_mutex);
-				enqueue(paths_queue, new_path);
-				mtx_unlock(&paths_mutex);
-				
-				/* wake up a thread */
-				mtx_lock(&conds_mutex);
-				while (!is_empty(paths_queue)) {
-					wake_next();
-				}
-				mtx_unlock(&conds_mutex);
-			}
+		printf("new_path = %s\n", new_path);
 		
-			/* entry is a file */
-			/* check if entry contains search term */
-			else if (strstr(file_name, search_term) != NULL) { /* entry contains search_term */
-				printf("%s\n", new_path);
-				num_files_found++;
+		/* check if entry is a directory */
+		stat(new_path, &buf);
+		if (S_ISDIR(buf.st_mode)) { /* entry is a directory, enqueue it to paths */
+			/* add to paths_queue */
+			mtx_lock(&paths_mutex);
+			enqueue(paths_queue, new_path);
+			mtx_unlock(&paths_mutex);
+			
+			/* wake up a thread */
+			mtx_lock(&conds_mutex);
+			while (!is_empty(paths_queue)) {
+				wake_next();
 			}
+			mtx_unlock(&conds_mutex);
+		}
+		
+		/* entry is a file */
+		/* check if entry contains search term */
+		else if (strstr(file_name, search_term) != NULL) { /* entry contains search_term */
+			printf("%s\n", new_path);
+			num_files_found++;
 		}
 	}
 	
