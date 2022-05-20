@@ -56,7 +56,7 @@ void enqueue(queue *q, void *value) {
 void *dequeue(queue *q) {
 	node *to_deq;
 	void *ret;
-	
+
 	if (is_empty(q)) {
 		return NULL;
 	}
@@ -109,14 +109,12 @@ char *search_term;
 /* Wake next sleeping thread up.
    USE AFTER LOCKING conds_mutex !!! */
 void wake_next() {
-	printf("in wake next\n");
 	int next_thrd = *((int *)dequeue(conds_queue));
 	cnd_signal(&cv_arr[next_thrd]);
-	printf("waking thread %d up\n", next_thrd);
 }
 
-void exit_all_thrds() {
-	printf("in exit_all_thrds\n");
+void exit_all_thrds(int id) {
+	printf("thread %d in exit_all_thrds\n", id);
 	/* raise flag */
 	done = 1;
 
@@ -126,46 +124,35 @@ void exit_all_thrds() {
 		wake_next();
 	}
 	mtx_unlock(&conds_mutex);
-	printf("exiting...\n");
+	
 	/* exit */
+	printf("thread %d exiting\n", id);
 	thrd_exit(0);
 }
 
 void wait_for_tasks(int thrd_id) {
-	mtx_lock(&paths_mutex);
-	printf("in wait for tasks\n");
-	if (is_empty(paths_queue)) {
-		printf("paths_queue empty\n");
-		num_thrds_waiting++;
-			
-		mtx_lock(&conds_mutex);
-		enqueue(conds_queue, &thrd_id);
-		mtx_unlock(&conds_mutex);
-		
-		/* check if all threads are sleeping */
-		printf("num_thrds_alive = %d\nnum_thrds_waiting = %d\n", num_thrds_alive, num_thrds_waiting);
-		if (num_thrds_alive - 1 == num_thrds_waiting) {
-			exit_all_thrds();
-		}
-		printf("thread %d waiting...\n", thrd_id);
-		cnd_wait(&cv_arr[thrd_id], &paths_mutex);
-		printf("thread %d stopped waiting.\n", thrd_id);
-		mtx_lock(&paths_mutex);
-		int boo = is_empty(paths_queue);
-		printf("is paths_queue empty? %d\n", boo);
+	/* check if all threads are sleeping */
+	if (num_thrds_alive - 1 == num_thrds_waiting) {
 		mtx_unlock(&paths_mutex);
-		/* thread woke up! */
-		num_thrds_waiting--;
+		exit_all_thrds(thrd_id);
 	}
 	
-	else {
-		mtx_unlock(&paths_mutex);
-	}
+	num_thrds_waiting++;
+	
+	mtx_lock(&conds_mutex);
+	enqueue(conds_queue, &thrd_id);
+	mtx_unlock(&conds_mutex);
+	
+	cnd_wait(&cv_arr[thrd_id], &paths_mutex);
+	
+	/* thread woke up! */
+	num_thrds_waiting--;
 }
 
-void exit_if_really_empty() {
-	printf("done = %d\n", done);
+
+void exit_if_really_empty(int id) {
 	if (done == 1) {
+		printf("thread %d exiting\n", id);
 		thrd_exit(0);
 	}
 }
@@ -234,12 +221,18 @@ void search_path(char *path, int thrd_id) {
 int thrd_func(void *thrd_id) {
 	char *curr_path;
 	int id = *((int *)thrd_id);
-	
+	printf("thread %d is in thrd_func\n", id);
 	while (1) {
-		wait_for_tasks(id);
+		mtx_lock(&paths_mutex);
+		if (is_empty(paths_queue)) {
+			wait_for_tasks(id);
+		}
+		else {
+			mtx_unlock(&paths_mutex);
+		}
 		
-		exit_if_really_empty();
-		
+		exit_if_really_empty(id);
+
 		mtx_lock(&paths_mutex);
 		curr_path = (char *)dequeue(paths_queue);
 		mtx_unlock(&paths_mutex);
@@ -255,6 +248,7 @@ void init_threads() {
 	thrds_arr = (thrd_t *)malloc(num_thrds * sizeof(thrd_t));
 	// assert malloc
 	for (int i = 0; i < num_thrds; ++i) {
+		printf("creating thread %d\n", i);
 		thrd_create(&thrds_arr[i], thrd_func, &i);
 	}
 }
@@ -323,6 +317,7 @@ int main(int argc, char *argv[]) {
 	/* wait for all threads to complete */
 	for (int i = 0; i < num_thrds; i++) {
     		thrd_join(thrds_arr[i], NULL);
+    		printf("joined thread %d\n", i);
 	}
 	
 	
