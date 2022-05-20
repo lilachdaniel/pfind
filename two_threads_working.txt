@@ -1,0 +1,43 @@
+done = 0
+not really empty
+in dequeue
+dequeued curr path
+/home/student/pfind/.pfind.c.swp
+/home/student/pfind/pfind.c
+/home/student/pfind/.pfind.c.swo
+done = 0
+not really empty
+in dequeue
+dequeued curr path
+done = 0
+not really empty
+in dequeue
+dequeued curr path
+done = 0
+not really empty
+in dequeue
+dequeued curr path
+done = 0
+not really empty
+in dequeue
+dequeued curr path
+thread 0: paths queue is empty
+thread 0 is in wait_for_tasks
+thread 0 is checking if all threads are sleeping...
+num_thrds_alive = 2
+num_thrds_waiting = 0
+thread 0 waiting...
+thread 0: paths queue is empty
+thread 0 is in wait_for_tasks
+thread 0 is checking if all threads are sleeping...
+num_thrds_alive = 2
+num_thrds_waiting = 1
+in exit_all_thrds
+in wake next
+in dequeue
+waking thread 0 up
+exiting...
+thread 0 stopped waiting.
+thread 0 finished wait_for_tasks
+done = 1
+Done searching, found 3 files
