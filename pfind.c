@@ -9,7 +9,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
-
+#include <errno.h>
 
 
 /* FIFO queue */
@@ -119,30 +119,30 @@ char *search_term;
    USE AFTER LOCKING conds_mutex !!! */
 void wake_next() {
 	long next_thrd = (long)dequeue(conds_queue);
-	printf("waking %ld up\n", next_thrd);
+	//printf("waking %ld up\n", next_thrd);
 	cnd_signal(&cv_arr[next_thrd]);
 }
 
 void exit_all_thrds(long id) {
-	printf("thread %ld: in exit_all_thrds\n", id);
+	//printf("thread %ld: in exit_all_thrds\n", id);
 	/* raise flag */
 	done = 1;
 
 	/* wake all threads up */
 	mtx_lock(&conds_mutex);
-	printf("thread %ld: starts waking up everyone\n", id);
+	//printf("thread %ld: starts waking up everyone\n", id);
 	while (!is_empty(conds_queue)) {
 		wake_next();
 	}
 	mtx_unlock(&conds_mutex);
 	
 	/* exit */
-	printf("thread %ld: exiting...\n", id);
+	//printf("thread %ld: exiting...\n", id);
 	thrd_exit(0);
 }
 
 void wait_for_tasks(long thrd_id) {
-	printf("thread %ld: in wait_for_tasks\n", thrd_id);
+	//printf("thread %ld: in wait_for_tasks\n", thrd_id);
 	/* check if all threads are sleeping */
 	if (num_thrds_alive - 1 == num_thrds_waiting) {
 		mtx_unlock(&paths_mutex);
@@ -160,12 +160,12 @@ void wait_for_tasks(long thrd_id) {
 
 	/* thread woke up! */
 	num_thrds_waiting--;
-	printf("thread %ld: finished wait_for_tasks\n", thrd_id);
+	//printf("thread %ld: finished wait_for_tasks\n", thrd_id);
 }
 
 
 void exit_if_really_empty(long id) {
-	printf("thread %ld: done = %d\n", id, done);
+	//printf("thread %ld: done = %d\n", id, done);
 	if (done == 1) {
 		mtx_unlock(&paths_mutex);
 		thrd_exit(0);
@@ -203,8 +203,14 @@ void search_path(char *path, long thrd_id) {
 	//printf("thread %ld: opening directory in path %s\n", thrd_id, path);
 	d = opendir(path);
 	if (d == NULL) {
-		printf("Directory %s: Permission denied.\n", path);
-		return;
+		if (errno != EACCES) {
+			fprintf(stderr, "Error in search_path: opendir failed on path %s\n", path);
+			err_in_thrd();
+		}
+		else {
+			printf("Directory %s: Permission denied.\n", path);
+			return;
+		}
 	}
 	//printf("thread %ld: before while in search_path\n", thrd_id);
 	while ((entry = readdir(d)) != NULL) {
