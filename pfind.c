@@ -11,6 +11,8 @@
 #include <dirent.h>
 #include <errno.h>
 
+#define TO_CHECK "test_filesystem/tkrstji_/mwtbvtsulb/qmudddqay/udlti/-rtrxwp/nuao/f/htblvgw/ylcymbrpav/vgqqkfky/ntqyj/ynljrurx-/krydjthjiicnef"
+
 
 /* FIFO queue */
 
@@ -172,18 +174,19 @@ void exit_if_really_empty(long id) {
 	}
 }
 
-void err_in_thrd() {
+void err_in_thrd(long thrd_id) {
+	//fprintf(stderr, "thread %ld: in error in thread\n", thrd_id);
 	exit_code = 1;
 	num_thrds_alive--;
 	thrd_exit(1);
 }
 
 /* Returns path + "/" + file_name */
-char *update_path(char *path, char *file_name) {
+char *update_path(char *path, char *file_name, long thrd_id) {
 	char *new_path = (char *)malloc(PATH_MAX * sizeof(char));
 	if (new_path == NULL) {
 		fprintf(stderr, "Error in update_path: malloc failed\n");
-		err_in_thrd();		
+		err_in_thrd(thrd_id);		
 	}
 		
 	strcpy(new_path, path);
@@ -204,8 +207,9 @@ void search_path(char *path, long thrd_id) {
 	d = opendir(path);
 	if (d == NULL) {
 		if (errno != EACCES) {
+			perror(strerror(errno));
 			fprintf(stderr, "Error in search_path: opendir failed on path %s\n", path);
-			err_in_thrd();
+			err_in_thrd(thrd_id);
 		}
 		else {
 			printf("Directory %s: Permission denied.\n", path);
@@ -217,21 +221,26 @@ void search_path(char *path, long thrd_id) {
 		//printf("thread %ld: in while in search_path\n", thrd_id);
 		/* extract file name */
 		file_name = entry->d_name;
-			
+
 		/* ignore "." and ".." */
-		if (strcmp(file_name, ".") == 0 || strcmp(file_name, "..") == 0){
+		if (strcmp(file_name, ".") == 0 || strcmp(file_name, "..") == 0) {
             		continue;
         	}
         	
 		/* put path to entry in new_path */
-		new_path = update_path(path, file_name);
+		new_path = update_path(path, file_name, thrd_id);
+
 		//printf("thread %ld: new_path = %s\n", thrd_id, new_path);
 		/* check if entry is a directory */
 		if (stat(new_path, &buf) < 0) {
+			closedir(d);
 			fprintf(stderr, "Error in search_path: stat failed\n");
-			err_in_thrd();
+			err_in_thrd(thrd_id);
 		}
-		
+		//if (strcmp(new_path, TO_CHECK) == 0) {
+		//	printf("thread %ld: %s\n", thrd_id, new_path);
+		//	printf("thread %ld: isdir? %d\n", thrd_id, S_ISDIR(buf.st_mode));
+		//}
 		if (S_ISDIR(buf.st_mode)) { /* entry is a directory, enqueue it to paths */
 			//printf("thread %ld: is dir\n", thrd_id);
 			/* add to paths_queue */
@@ -255,8 +264,10 @@ void search_path(char *path, long thrd_id) {
 			printf("%s\n", new_path);
 			num_files_found++;
 		}
-		//printf("thread %ld: is file that doesn't contain term\n", thrd_id);
+		//else { printf("thread %ld: is file that doesn't contain term\n", thrd_id); }
 	}
+	//printf("thread %ld: closing directory in path %s\n", thrd_id, path);
+	closedir(d);
 	
 }
 
@@ -374,7 +385,11 @@ void init_global_vars(char *root_path) {
 
 int main(int argc, char *argv[]) {
 	char *root_path;
-	
+	//struct stat buf;
+	//if (stat(TO_CHECK, &buf) < 0) {
+	//	fprintf(stderr, "Error in search_path: stat failed\n");
+	//}
+	//printf("isdir? %d\n", S_ISDIR(buf.st_mode));
 	/* extract arguments */
 	if (argc != 4) {
 		fprintf(stderr, "Error in main: incorrect number of arguments\n");
@@ -399,6 +414,7 @@ int main(int argc, char *argv[]) {
     			fprintf(stderr, "Error in main: thrd_join failed\n");
 			exit(1);
 		}
+		//fprintf(stderr, "thread %d joined\n", i);
 	}
 	
 	
