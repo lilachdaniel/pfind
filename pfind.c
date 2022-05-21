@@ -11,7 +11,6 @@
 #include <dirent.h>
 #include <errno.h>
 
-#define TO_CHECK "test_filesystem/tkrstji_/mwtbvtsulb/qmudddqay/udlti/-rtrxwp/nuao/f/htblvgw/ylcymbrpav/vgqqkfky/ntqyj/ynljrurx-/krydjthjiicnef"
 
 
 /* FIFO queue */
@@ -37,11 +36,14 @@ int is_empty(queue *q) {
 	return q->first == NULL;
 }
 
-/* Adds an element to a given queue */
-void enqueue(queue *q, void *value) {
+/* Adds an element to a given queue
+   Returns 0 on success and -1 on failiure */
+int enqueue(queue *q, void *value) {
 	/* create new node */
 	node *new_node = (node *)malloc(sizeof(node));
-	// assert malloc
+	if (new_node == NULL) {
+		return -1;
+	}
 	
 	new_node->value = value;
 	new_node->next = q->last;
@@ -56,9 +58,10 @@ void enqueue(queue *q, void *value) {
 	}
 	q->last = new_node;
 	
+	return 0;
 }
 
-/* Returns the value of the first element of a given queue */
+/* Returns the value of the first element of a given queue or NULL if fails */
 void *dequeue(queue *q) {
 	node *to_deq;
 	void *ret;
@@ -80,10 +83,12 @@ void *dequeue(queue *q) {
 	return ret;
 }
 
-/* Initializes empty queue */
+/* Returns an empty queue or NULL if failed */
 queue *init_queue() {
 	queue *q = (queue *)malloc(sizeof(queue));
-	// assert malloc
+	if (q == NULL) {
+		return NULL;
+	}
 	
 	q->first = NULL;
 	q->last = NULL;
@@ -117,10 +122,22 @@ mtx_t start_mutex;
 
 char *search_term;
 
+
+void err_in_thrd(long thrd_id) {
+	//fprintf(stderr, "thread %ld: in error in thread\n", thrd_id);
+	exit_code = 1;
+	num_thrds_alive--;
+	thrd_exit(1);
+}
+
 /* Wake next sleeping thread up.
    USE AFTER LOCKING conds_mutex !!! */
-void wake_next() {
+void wake_next(long thrd_id) {
 	long next_thrd = (long)dequeue(conds_queue);
+	if (next_thrd == NULL) {
+		fprintf(stderr, "Error in wake_next: malloc failed\n");
+		err_in_thrd(thrd_id);
+	}
 	//printf("waking %ld up\n", next_thrd);
 	cnd_signal(&cv_arr[next_thrd]);
 }
@@ -134,7 +151,7 @@ void exit_all_thrds(long id) {
 	mtx_lock(&conds_mutex);
 	//printf("thread %ld: starts waking up everyone\n", id);
 	while (!is_empty(conds_queue)) {
-		wake_next();
+		wake_next(id);
 	}
 	mtx_unlock(&conds_mutex);
 	
@@ -154,7 +171,10 @@ void wait_for_tasks(long thrd_id) {
 	num_thrds_waiting++;
 	
 	mtx_lock(&conds_mutex);
-	enqueue(conds_queue, (void *)thrd_id);
+	if (enqueue(conds_queue, (void *)thrd_id) < 0) {
+		fprintf(stderr, "Error in wait_for_tasks: enqueue failed\n");
+		err_in_thrd(thrd_id);
+	}
 	mtx_unlock(&conds_mutex);
 
 	cnd_wait(&cv_arr[thrd_id], &paths_mutex);
@@ -174,12 +194,6 @@ void exit_if_really_empty(long id) {
 	}
 }
 
-void err_in_thrd(long thrd_id) {
-	//fprintf(stderr, "thread %ld: in error in thread\n", thrd_id);
-	exit_code = 1;
-	num_thrds_alive--;
-	thrd_exit(1);
-}
 
 /* Returns path + "/" + file_name */
 char *update_path(char *path, char *file_name, long thrd_id) {
@@ -246,14 +260,18 @@ void search_path(char *path, long thrd_id) {
 			/* add to paths_queue */
 			mtx_lock(&paths_mutex);
 			//printf("thread %ld: locked paths_mutex in search_path\n", thrd_id);
-			enqueue(paths_queue, new_path);
+			if (enqueue(paths_queue, new_path) < 0) {
+				closedir(d);
+				fprintf(stderr, "Error in search_path: enqueue failed\n");
+				err_in_thrd(thrd_id);
+			}
 			//printf("thread %ld: enqueued %s\n", thrd_id, new_path);
 			mtx_unlock(&paths_mutex);
 
 			/* wake up a thread */
 			mtx_lock(&conds_mutex);
 			while (!is_empty(conds_queue)) {
-				wake_next();
+				wake_next(id);
 			}
 			mtx_unlock(&conds_mutex);
 		}
@@ -295,6 +313,10 @@ int thrd_func(void *thrd_id) {
 		//mtx_lock(&paths_mutex);
 		//printf("thread %ld: locked paths_mutex\n", id);
 		curr_path = (char *)dequeue(paths_queue);
+		if (curr_path == NULL) {
+			fprintf(stderr, "Error in thrd_func: dequeue failed\n");
+			err_in_thrd(id);
+		}
 		//printf("thread %ld: dequeued %s from paths_queue\n", id, curr_path);
 		mtx_unlock(&paths_mutex);
 		//printf("thread %ld: unlocked paths_mutex\n", id);
@@ -365,11 +387,22 @@ void init_global_vars(char *root_path) {
 	
 	/* init paths queue */
 	paths_queue = init_queue();
-	enqueue(paths_queue, root_path);
+	if (paths_queue == NULL) {
+		fprintf(stderr, "Error in main: init_queue failed\n");
+		exit(1);
+	}
+	if (enqueue(paths_queue, root_path) < 0) {
+		fprintf(stderr, "Error in main: enqueue failed\n");
+		exit(1);
+	}
 	
 	/* init cond_queue */
 	conds_queue = init_queue();
-	
+	if (conds_queue NULL) {
+		fprintf(stderr, "Error in main: init_queue failed\n");
+		exit(1);
+	}
+		
 	/* init mtxs */
 	mtx_init(&paths_mutex, mtx_plain);
 	mtx_init(&conds_mutex, mtx_plain);
