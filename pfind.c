@@ -61,7 +61,7 @@ int enqueue(queue *q, void *value) {
 	return 0;
 }
 
-/* Returns the value of the first element of a given queue or NULL if fails */
+/* Returns the value of the first element of a given queue */
 void *dequeue(queue *q) {
 	node *to_deq;
 	void *ret;
@@ -124,70 +124,62 @@ char *search_term;
 
 
 void err_in_thrd(long thrd_id) {
-	//fprintf(stderr, "thread %ld: in error in thread\n", thrd_id);
 	exit_code = 1;
 	num_thrds_alive--;
-	thrd_exit(1);
 }
 
 /* Wake next sleeping thread up.
    USE AFTER LOCKING conds_mutex !!! */
 void wake_next(long thrd_id) {
 	long next_thrd = (long)dequeue(conds_queue);
-	if (next_thrd == NULL) {
-		fprintf(stderr, "Error in wake_next: malloc failed\n");
-		err_in_thrd(thrd_id);
-	}
-	//printf("waking %ld up\n", next_thrd);
 	cnd_signal(&cv_arr[next_thrd]);
 }
 
 void exit_all_thrds(long id) {
-	//printf("thread %ld: in exit_all_thrds\n", id);
 	/* raise flag */
 	done = 1;
 
 	/* wake all threads up */
 	mtx_lock(&conds_mutex);
-	//printf("thread %ld: starts waking up everyone\n", id);
 	while (!is_empty(conds_queue)) {
 		wake_next(id);
 	}
 	mtx_unlock(&conds_mutex);
 	
 	/* exit */
-	//printf("thread %ld: exiting...\n", id);
 	thrd_exit(0);
 }
 
-void wait_for_tasks(long thrd_id) {
-	//printf("thread %ld: in wait_for_tasks\n", thrd_id);
+/* Returns 0 on success and -1 on failure */
+int wait_for_tasks(long thrd_id) {
 	/* check if all threads are sleeping */
-	if (num_thrds_alive - 1 == num_thrds_waiting) {
+	if (num_thrds_alive - 1 == num_thrds_waiting && is_empty(paths_queue)) {
 		mtx_unlock(&paths_mutex);
 		exit_all_thrds(thrd_id);
 	}
 	
 	num_thrds_waiting++;
 	
+	/* enqueue new waiting thread to conds_queue */
 	mtx_lock(&conds_mutex);
 	if (enqueue(conds_queue, (void *)thrd_id) < 0) {
+		mtx_unlock(&conds_mutex);
 		fprintf(stderr, "Error in wait_for_tasks: enqueue failed\n");
 		err_in_thrd(thrd_id);
+		return -1;
 	}
 	mtx_unlock(&conds_mutex);
 
 	cnd_wait(&cv_arr[thrd_id], &paths_mutex);
-	//mtx_unlock(&paths_mutex);
 
 	/* thread woke up! */
 	num_thrds_waiting--;
-	//printf("thread %ld: finished wait_for_tasks\n", thrd_id);
+	
+	return 0;
 }
 
 
 void exit_if_really_empty(long id) {
-	//printf("thread %ld: done = %d\n", id, done);
 	if (done == 1) {
 		mtx_unlock(&paths_mutex);
 		thrd_exit(0);
@@ -195,14 +187,14 @@ void exit_if_really_empty(long id) {
 }
 
 
-/* Returns path + "/" + file_name */
+/* Returns path + "/" + file_name or NULL if fails */
 char *update_path(char *path, char *file_name, long thrd_id) {
 	char *new_path = (char *)malloc(PATH_MAX * sizeof(char));
 	if (new_path == NULL) {
-		fprintf(stderr, "Error in update_path: malloc failed\n");
-		err_in_thrd(thrd_id);		
+		return NULL;
 	}
-		
+	
+	/* create new_path */
 	strcpy(new_path, path);
         strcat(new_path, "/");
         strcat(new_path, file_name);
@@ -210,29 +202,35 @@ char *update_path(char *path, char *file_name, long thrd_id) {
         return new_path;
 }
 
-
-void search_path(char *path, long thrd_id) {
+/* Returns 0 on success and -1 on failure */
+int search_path(char *path, long thrd_id) {
 	struct dirent *entry;
 	DIR *d;
 	struct stat buf;
 	char *file_name;
 	char *new_path;
-	//printf("thread %ld: opening directory in path %s\n", thrd_id, path);
+	
+	/* open directory on path */
 	d = opendir(path);
+	if (dirfd(d) > 1000) {
+		fprintf(stderr, "fd = %d\n", dirfd(d));
+	}
 	if (d == NULL) {
 		if (errno != EACCES) {
 			perror(strerror(errno));
 			fprintf(stderr, "Error in search_path: opendir failed on path %s\n", path);
 			err_in_thrd(thrd_id);
+			return -1;
 		}
 		else {
 			printf("Directory %s: Permission denied.\n", path);
-			return;
+			return 0;
 		}
 	}
-	//printf("thread %ld: before while in search_path\n", thrd_id);
+	
+	/* search directory */
 	while ((entry = readdir(d)) != NULL) {
-		//printf("thread %ld: in while in search_path\n", thrd_id);
+		//printf("thread %ld in while in search_path\n", thrd_id);
 		/* extract file name */
 		file_name = entry->d_name;
 
@@ -243,35 +241,36 @@ void search_path(char *path, long thrd_id) {
         	
 		/* put path to entry in new_path */
 		new_path = update_path(path, file_name, thrd_id);
-
-		//printf("thread %ld: new_path = %s\n", thrd_id, new_path);
+		if (new_path == NULL) {
+			fprintf(stderr, "Error in update_path: malloc failed\n");
+			err_in_thrd(thrd_id);		
+			return -1;
+		}
+		
 		/* check if entry is a directory */
 		if (stat(new_path, &buf) < 0) {
 			closedir(d);
 			fprintf(stderr, "Error in search_path: stat failed\n");
 			err_in_thrd(thrd_id);
+			return -1;
 		}
-		//if (strcmp(new_path, TO_CHECK) == 0) {
-		//	printf("thread %ld: %s\n", thrd_id, new_path);
-		//	printf("thread %ld: isdir? %d\n", thrd_id, S_ISDIR(buf.st_mode));
-		//}
+
 		if (S_ISDIR(buf.st_mode)) { /* entry is a directory, enqueue it to paths */
-			//printf("thread %ld: is dir\n", thrd_id);
 			/* add to paths_queue */
 			mtx_lock(&paths_mutex);
-			//printf("thread %ld: locked paths_mutex in search_path\n", thrd_id);
 			if (enqueue(paths_queue, new_path) < 0) {
 				closedir(d);
+				mtx_unlock(&paths_mutex);
 				fprintf(stderr, "Error in search_path: enqueue failed\n");
 				err_in_thrd(thrd_id);
+				return -1;
 			}
-			//printf("thread %ld: enqueued %s\n", thrd_id, new_path);
 			mtx_unlock(&paths_mutex);
 
 			/* wake up a thread */
 			mtx_lock(&conds_mutex);
 			while (!is_empty(conds_queue)) {
-				wake_next(id);
+				wake_next(thrd_id);
 			}
 			mtx_unlock(&conds_mutex);
 		}
@@ -282,14 +281,15 @@ void search_path(char *path, long thrd_id) {
 			printf("%s\n", new_path);
 			num_files_found++;
 		}
-		//else { printf("thread %ld: is file that doesn't contain term\n", thrd_id); }
+
 	}
-	//printf("thread %ld: closing directory in path %s\n", thrd_id, path);
+
 	closedir(d);
+	return 0;
 	
 }
 
-	
+/* Returns 0 on success and -1 on failure */
 int thrd_func(void *thrd_id) {
 	char *curr_path;
 	long id = (long)thrd_id;
@@ -302,27 +302,22 @@ int thrd_func(void *thrd_id) {
 
 	while (1) {
 		mtx_lock(&paths_mutex);
+		
 		while (is_empty(paths_queue)) {
 			exit_if_really_empty(id);
-			wait_for_tasks(id);
+			if (wait_for_tasks(id) < 0) {
+				return -1;
+			}
 		}
-		//else {
-		//	mtx_unlock(&paths_mutex);
-		//}
 
-		//mtx_lock(&paths_mutex);
-		//printf("thread %ld: locked paths_mutex\n", id);
 		curr_path = (char *)dequeue(paths_queue);
-		if (curr_path == NULL) {
-			fprintf(stderr, "Error in thrd_func: dequeue failed\n");
-			err_in_thrd(id);
-		}
-		//printf("thread %ld: dequeued %s from paths_queue\n", id, curr_path);
+		
 		mtx_unlock(&paths_mutex);
-		//printf("thread %ld: unlocked paths_mutex\n", id);
-		//printf("thread %ld: starts searching\n", id);
-		search_path(curr_path, id);
-		//printf("thread %ld: finished searching\n", id);
+
+
+		if (search_path(curr_path, id) < 0) {
+			return -1;
+		}
 	}
 	return 0; /* everything went fine */
 }
@@ -370,8 +365,6 @@ void destroy_cv_arr() {
 	for (int i = 0; i < num_thrds; ++i) {
 		cnd_destroy(&cv_arr[i]);
 	}
-	
-	//free(cv_arr); // remove free?
 }
 
 
@@ -398,7 +391,7 @@ void init_global_vars(char *root_path) {
 	
 	/* init cond_queue */
 	conds_queue = init_queue();
-	if (conds_queue NULL) {
+	if (conds_queue == NULL) {
 		fprintf(stderr, "Error in main: init_queue failed\n");
 		exit(1);
 	}
@@ -418,11 +411,7 @@ void init_global_vars(char *root_path) {
 
 int main(int argc, char *argv[]) {
 	char *root_path;
-	//struct stat buf;
-	//if (stat(TO_CHECK, &buf) < 0) {
-	//	fprintf(stderr, "Error in search_path: stat failed\n");
-	//}
-	//printf("isdir? %d\n", S_ISDIR(buf.st_mode));
+
 	/* extract arguments */
 	if (argc != 4) {
 		fprintf(stderr, "Error in main: incorrect number of arguments\n");
@@ -447,9 +436,7 @@ int main(int argc, char *argv[]) {
     			fprintf(stderr, "Error in main: thrd_join failed\n");
 			exit(1);
 		}
-		//fprintf(stderr, "thread %d joined\n", i);
 	}
-	
 	
 	/* if everything went fine */
 	/* clean up */
@@ -462,7 +449,6 @@ int main(int argc, char *argv[]) {
 	/* print summery and exit */
 	printf("Done searching, found %d files\n", num_files_found);
 	exit(exit_code);
-	
 }
 
 
