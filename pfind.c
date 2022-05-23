@@ -209,12 +209,12 @@ int search_path(char *path, long thrd_id) {
 	struct stat buf;
 	char *file_name;
 	char *new_path;
-	
+
 	/* open directory on path */
 	d = opendir(path);
-	if (dirfd(d) > 1000) {
-		fprintf(stderr, "fd = %d\n", dirfd(d));
-	}
+	//if (dirfd(d) > 1000) {
+	//	fprintf(stderr, "fd = %d\n", dirfd(d));
+	//}
 	if (d == NULL) {
 		if (errno != EACCES) {
 			perror(strerror(errno));
@@ -227,7 +227,7 @@ int search_path(char *path, long thrd_id) {
 			return 0;
 		}
 	}
-	
+
 	/* search directory */
 	while ((entry = readdir(d)) != NULL) {
 		//printf("thread %ld in while in search_path\n", thrd_id);
@@ -269,7 +269,7 @@ int search_path(char *path, long thrd_id) {
 
 			/* wake up a thread */
 			mtx_lock(&conds_mutex);
-			while (!is_empty(conds_queue)) {
+			if (!is_empty(conds_queue)) {
 				wake_next(thrd_id);
 			}
 			mtx_unlock(&conds_mutex);
@@ -313,7 +313,6 @@ int thrd_func(void *thrd_id) {
 		curr_path = (char *)dequeue(paths_queue);
 		
 		mtx_unlock(&paths_mutex);
-
 
 		if (search_path(curr_path, id) < 0) {
 			return -1;
