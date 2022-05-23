@@ -215,7 +215,6 @@ int search_path(char *path, long thrd_id) {
 
 	if (d == NULL) {
 		if (errno != EACCES) {
-			perror(strerror(errno));
 			fprintf(stderr, "Error in search_path: opendir failed on path %s\n", path);
 			err_in_thrd();
 			return -1;
