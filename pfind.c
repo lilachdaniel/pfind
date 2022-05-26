@@ -209,6 +209,7 @@ int search_path(char *path, long thrd_id) {
 	struct stat buf;
 	char *file_name;
 	char *new_path;
+	int is_dir;
 
 	/* open directory on path */
 	d = opendir(path);
@@ -246,13 +247,22 @@ int search_path(char *path, long thrd_id) {
 		
 		/* check if entry is a directory */
 		if (stat(new_path, &buf) < 0) {
-			closedir(d);
-			fprintf(stderr, "Error in search_path: stat failed\n");
-			err_in_thrd();
-			return -1;
+			if (errno != ENOENT) {
+				closedir(d);
+				fprintf(stderr, "Error in search_path: stat failed\n");
+				err_in_thrd();
+				return -1;
+			}
+			else {
+				is_dir = 0;
+			}
+				
+		}
+		else {
+			is_dir = S_ISDIR(buf.st_mode);
 		}
 
-		if (S_ISDIR(buf.st_mode)) { /* entry is a directory, enqueue it to paths */
+		if (is_dir) { /* entry is a directory, enqueue it to paths */
 			/* add to paths_queue */
 			mtx_lock(&paths_mutex);
 			if (enqueue(paths_queue, new_path) < 0) {
